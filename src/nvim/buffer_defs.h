@@ -543,8 +543,10 @@ struct file_buffer {
   Callback b_cfu_cb;            ///< 'completefunc' callback
   char *b_p_ofu;                ///< 'omnifunc'
   Callback b_ofu_cb;            ///< 'omnifunc' callback
-  char *b_p_tfu;                ///< 'tagfunc'
+  char *b_p_tfu;                ///< 'tagfunc' option value
   Callback b_tfu_cb;            ///< 'tagfunc' callback
+  char *b_p_ffu;                ///< 'findfunc' option value
+  Callback b_ffu_cb;            ///< 'findfunc' callback
   int b_p_eof;                  ///< 'endoffile'
   int b_p_eol;                  ///< 'endofline'
   int b_p_fixeol;               ///< 'fixendofline'
@@ -938,6 +940,7 @@ typedef struct {
   FloatRelative relative;
   bool external;
   bool focusable;
+  bool mouse;
   WinSplit split;
   int zindex;
   WinStyle style;
@@ -964,6 +967,7 @@ typedef struct {
                                       .row = 0, .col = 0, .anchor = 0, \
                                       .relative = 0, .external = false, \
                                       .focusable = true, \
+                                      .mouse = true, \
                                       .split = 0, \
                                       .zindex = kZIndexFloatDefault, \
                                       .style = kWinStyleUnused, \
@@ -1247,7 +1251,7 @@ struct window_S {
   // transform a pointer to a "onebuf" option into a "allbuf" option
 #define GLOBAL_WO(p)    ((char *)(p) + sizeof(winopt_T))
 
-  // A few options have local flags for P_INSECURE.
+  // A few options have local flags for kOptFlagInsecure.
   uint32_t w_p_stl_flags;           // flags for 'statusline'
   uint32_t w_p_wbr_flags;           // flags for 'winbar'
   uint32_t w_p_fde_flags;           // flags for 'foldexpr'

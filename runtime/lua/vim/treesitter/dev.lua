@@ -330,9 +330,7 @@ end
 ---
 --- @param opts vim.treesitter.dev.inspect_tree.Opts?
 function M.inspect_tree(opts)
-  vim.validate({
-    opts = { opts, 't', true },
-  })
+  vim.validate('opts', opts, 'table', true)
 
   opts = opts or {}
 
@@ -529,7 +527,7 @@ function M.inspect_tree(opts)
     end,
   })
 
-  api.nvim_create_autocmd('BufHidden', {
+  api.nvim_create_autocmd({ 'BufHidden', 'BufUnload' }, {
     group = group,
     buffer = buf,
     once = true,
@@ -667,10 +665,10 @@ function M.edit_query(lang)
       api.nvim_buf_clear_namespace(query_buf, edit_ns, 0, -1)
     end,
   })
-  api.nvim_create_autocmd('BufHidden', {
+  api.nvim_create_autocmd({ 'BufHidden', 'BufUnload' }, {
     group = group,
     buffer = buf,
-    desc = 'Close the editor window when the source buffer is hidden',
+    desc = 'Close the editor window when the source buffer is hidden or unloaded',
     once = true,
     callback = function()
       close_win(query_win)

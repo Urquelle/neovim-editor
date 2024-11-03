@@ -636,13 +636,13 @@ A subset of the `vim.*` API is available in threads. This includes:
 
 
 ==============================================================================
-VIM.HIGHLIGHT                                                  *vim.highlight*
+VIM.HL                                                                *vim.hl*
 
-vim.highlight.on_yank({opts})                        *vim.highlight.on_yank()*
+vim.hl.on_yank({opts})                                      *vim.hl.on_yank()*
     Highlight the yanked text during a |TextYankPost| event.
 
     Add the following to your `init.vim`: >vim
-        autocmd TextYankPost * silent! lua vim.highlight.on_yank {higroup='Visual', timeout=300}
+        autocmd TextYankPost * silent! lua vim.hl.on_yank {higroup='Visual', timeout=300}
 <
 
     Parameters: ~
@@ -655,9 +655,9 @@ vim.highlight.on_yank({opts})                        *vim.highlight.on_yank()*
                   true)
                 • event event structure (default vim.v.event)
                 • priority integer priority (default
-                  |vim.highlight.priorities|`.user`)
+                  |vim.hl.priorities|`.user`)
 
-vim.highlight.priorities                            *vim.highlight.priorities*
+vim.hl.priorities                                          *vim.hl.priorities*
     Table with default priorities used for highlighting:
     • `syntax`: `50`, used for standard syntax highlighting
     • `treesitter`: `100`, used for treesitter-based highlighting
@@ -666,8 +666,8 @@ vim.highlight.priorities                            *vim.highlight.priorities*
     • `user`: `200`, used for user-triggered highlights such as LSP document
       symbols or `on_yank` autocommands
 
-                                                       *vim.highlight.range()*
-vim.highlight.range({bufnr}, {ns}, {higroup}, {start}, {finish}, {opts})
+                                                              *vim.hl.range()*
+vim.hl.range({bufnr}, {ns}, {higroup}, {start}, {finish}, {opts})
     Apply highlight group to range of text.
 
     Parameters: ~
@@ -684,8 +684,7 @@ vim.highlight.range({bufnr}, {ns}, {higroup}, {start}, {finish}, {opts})
                    • {inclusive}? (`boolean`, default: `false`) Indicates
                      whether the range is end-inclusive
                    • {priority}? (`integer`, default:
-                     `vim.highlight.priorities.user`) Indicates priority of
-                     highlight
+                     `vim.hl.priorities.user`) Highlight priority
 
 
 ==============================================================================
@@ -1001,22 +1000,6 @@ vim.schedule({fn})                                            *vim.schedule()*
     Parameters: ~
       • {fn}  (`fun()`)
 
-vim.str_byteindex({str}, {index}, {use_utf16})           *vim.str_byteindex()*
-    Convert UTF-32 or UTF-16 {index} to byte index. If {use_utf16} is not
-    supplied, it defaults to false (use UTF-32). Returns the byte index.
-
-    Invalid UTF-8 and NUL is treated like in |vim.str_utfindex()|. An {index}
-    in the middle of a UTF-16 sequence is rounded upwards to the end of that
-    sequence.
-
-    Parameters: ~
-      • {str}        (`string`)
-      • {index}      (`integer`)
-      • {use_utf16}  (`boolean?`)
-
-    Return: ~
-        (`integer`)
-
 vim.str_utf_end({str}, {index})                            *vim.str_utf_end()*
     Gets the distance (in bytes) from the last byte of the codepoint
     (character) that {index} points to.
@@ -1073,23 +1056,6 @@ vim.str_utf_start({str}, {index})                        *vim.str_utf_start()*
 
     Return: ~
         (`integer`)
-
-vim.str_utfindex({str}, {index})                          *vim.str_utfindex()*
-    Convert byte index to UTF-32 and UTF-16 indices. If {index} is not
-    supplied, the length of the string is used. All indices are zero-based.
-
-    Embedded NUL bytes are treated as terminating the string. Invalid UTF-8
-    bytes, and embedded surrogates are counted as one code point each. An
-    {index} in the middle of a UTF-8 sequence is rounded upwards to the end of
-    that sequence.
-
-    Parameters: ~
-      • {str}    (`string`)
-      • {index}  (`integer?`)
-
-    Return (multiple): ~
-        (`integer`) UTF-32 index
-        (`integer`) UTF-16 index
 
 vim.stricmp({a}, {b})                                          *vim.stricmp()*
     Compares strings case-insensitively.
@@ -1669,7 +1635,7 @@ vim.notify_once({msg}, {level}, {opts})                    *vim.notify_once()*
     Return: ~
         (`boolean`) true if message was displayed, else false
 
-vim.on_key({fn}, {ns_id})                                       *vim.on_key()*
+vim.on_key({fn}, {ns_id}, {opts})                               *vim.on_key()*
     Adds Lua function {fn} with namespace id {ns_id} as a listener to every,
     yes every, input key.
 
@@ -1683,17 +1649,19 @@ vim.on_key({fn}, {ns_id})                                       *vim.on_key()*
       • {fn} will not be cleared by |nvim_buf_clear_namespace()|
 
     Parameters: ~
-      • {fn}     (`fun(key: string, typed: string)?`) Function invoked for
-                 every input key, after mappings have been applied but before
-                 further processing. Arguments {key} and {typed} are raw
-                 keycodes, where {key} is the key after mappings are applied,
-                 and {typed} is the key(s) before mappings are applied.
-                 {typed} may be empty if {key} is produced by non-typed key(s)
-                 or by the same typed key(s) that produced a previous {key}.
-                 When {fn} is `nil` and {ns_id} is specified, the callback
+      • {fn}     (`fun(key: string, typed: string): string??`) Function
+                 invoked for every input key, after mappings have been applied
+                 but before further processing. Arguments {key} and {typed}
+                 are raw keycodes, where {key} is the key after mappings are
+                 applied, and {typed} is the key(s) before mappings are
+                 applied. {typed} may be empty if {key} is produced by
+                 non-typed key(s) or by the same typed key(s) that produced a
+                 previous {key}. If {fn} returns an empty string, {key} is
+                 discarded/ignored. When {fn} is `nil`, the callback
                  associated with namespace {ns_id} is removed.
       • {ns_id}  (`integer?`) Namespace ID. If nil or 0, generates and returns
                  a new |nvim_create_namespace()| id.
+      • {opts}   (`table?`) Optional parameters
 
     Return: ~
         (`integer`) Namespace id associated with {fn}. Or count of all
@@ -1776,6 +1744,44 @@ vim.schedule_wrap({fn})                                  *vim.schedule_wrap()*
       • |lua-loop-callbacks|
       • |vim.schedule()|
       • |vim.in_fast_event()|
+
+                                                         *vim.str_byteindex()*
+vim.str_byteindex({s}, {encoding}, {index}, {strict_indexing})
+    Convert UTF-32, UTF-16 or UTF-8 {index} to byte index. If
+    {strict_indexing} is false then then an out of range index will return
+    byte length instead of throwing an error.
+
+    Invalid UTF-8 and NUL is treated like in |vim.str_utfindex()|. An {index}
+    in the middle of a UTF-16 sequence is rounded upwards to the end of that
+    sequence.
+
+    Parameters: ~
+      • {s}                (`string`)
+      • {encoding}         (`"utf-8"|"utf-16"|"utf-32"`)
+      • {index}            (`integer`)
+      • {strict_indexing}  (`boolean?`) default: true
+
+    Return: ~
+        (`integer`)
+
+                                                          *vim.str_utfindex()*
+vim.str_utfindex({s}, {encoding}, {index}, {strict_indexing})
+    Convert byte index to UTF-32, UTF-16 or UTF-8 indices. If {index} is not
+    supplied, the length of the string is used. All indices are zero-based.
+
+    If {strict_indexing} is false then an out of range index will return
+    string length instead of throwing an error. Invalid UTF-8 bytes, and
+    embedded surrogates are counted as one code point each. An {index} in the
+    middle of a UTF-8 sequence is rounded upwards to the end of that sequence.
+
+    Parameters: ~
+      • {s}                (`string`)
+      • {encoding}         (`"utf-8"|"utf-16"|"utf-32"`)
+      • {index}            (`integer?`)
+      • {strict_indexing}  (`boolean?`) default: true
+
+    Return: ~
+        (`integer`)
 
 vim.system({cmd}, {opts}, {on_exit})                            *vim.system()*
     Runs a system command or throws an error if {cmd} cannot be run.
@@ -2399,31 +2405,29 @@ vim.trim({s})                                                     *vim.trim()*
       • |lua-patterns|
       • https://www.lua.org/pil/20.2.html
 
-vim.validate({opt})                                           *vim.validate()*
+                                                              *vim.validate()*
+vim.validate({name}, {value}, {validator}, {optional}, {message})
     Validate function arguments.
 
     This function has two valid forms:
-    1. vim.validate(name: str, value: any, type: string, optional?: bool)
-    2. vim.validate(spec: table)
-
-    Form 1 validates that argument {name} with value {value} has the type
-    {type}. {type} must be a value returned by |lua-type()|. If {optional} is
-    true, then {value} may be null. This form is significantly faster and
-    should be preferred for simple cases.
-
-    Example: >lua
-        function vim.startswith(s, prefix)
+    1. `vim.validate(name, value, validator[, optional][, message])`
+       Validates that argument {name} with value {value} satisfies
+       {validator}. If {optional} is given and is `true`, then {value} may be
+       `nil`. If {message} is given, then it is used as the expected type in
+       the error message.
+       Example: >lua
+         function vim.startswith(s, prefix)
           vim.validate('s', s, 'string')
           vim.validate('prefix', prefix, 'string')
           ...
         end
 <
-
-    Form 2 validates a parameter specification (types and values). Specs are
-    evaluated in alphanumeric order, until the first failure.
-
-    Usage example: >lua
-        function user.new(name, age, hobbies)
+    2. `vim.validate(spec)` (deprecated) where `spec` is of type
+       `table<string,[value:any, validator: vim.validate.Validator, optional_or_msg? : boolean|string]>)`
+       Validates a argument specification. Specs are evaluated in alphanumeric
+       order, until the first failure.
+       Example: >lua
+         function user.new(name, age, hobbies)
           vim.validate{
             name={name, 'string'},
             age={age, 'number'},
@@ -2434,40 +2438,44 @@ vim.validate({opt})                                           *vim.validate()*
 <
 
     Examples with explicit argument values (can be run directly): >lua
-        vim.validate{arg1={{'foo'}, 'table'}, arg2={'foo', 'string'}}
+        vim.validate('arg1', {'foo'}, 'table')
+           --> NOP (success)
+        vim.validate('arg2', 'foo', 'string')
            --> NOP (success)
 
-        vim.validate{arg1={1, 'table'}}
+        vim.validate('arg1', 1, 'table')
            --> error('arg1: expected table, got number')
 
-        vim.validate{arg1={3, function(a) return (a % 2) == 0 end, 'even number'}}
+        vim.validate('arg1', 3, function(a) return (a % 2) == 0 end, 'even number')
            --> error('arg1: expected even number, got 3')
 <
 
     If multiple types are valid they can be given as a list. >lua
-        vim.validate{arg1={{'foo'}, {'table', 'string'}}, arg2={'foo', {'table', 'string'}}}
+        vim.validate('arg1', {'foo'}, {'table', 'string'})
+        vim.validate('arg2', 'foo', {'table', 'string'})
         -- NOP (success)
 
-        vim.validate{arg1={1, {'string', 'table'}}}
+        vim.validate('arg1', 1, {'string', 'table'})
         -- error('arg1: expected string|table, got number')
 <
 
+    Note: ~
+      • `validator` set to a value returned by |lua-type()| provides the best
+        performance.
+
     Parameters: ~
-      • {opt}  (`table`) Names of parameters to validate. Each key is a
-               parameter name; each value is a tuple in one of these forms:
-               1. (arg_value, type_name, optional)
-                  • arg_value: argument value
-                  • type_name: string|table type name, one of: ("table", "t",
-                    "string", "s", "number", "n", "boolean", "b", "function",
-                    "f", "nil", "thread", "userdata") or list of them.
-                  • optional: (optional) boolean, if true, `nil` is valid
-               2. (arg_value, fn, msg)
-                  • arg_value: argument value
-                  • fn: any function accepting one argument, returns true if
-                    and only if the argument is valid. Can optionally return
-                    an additional informative error message as the second
-                    returned value.
-                  • msg: (optional) error string if validation fails
+      • {name}       (`string`) Argument name
+      • {value}      (`string`) Argument value
+      • {validator}  (`vim.validate.Validator`)
+                     • (`string|string[]`): Any value that can be returned
+                       from |lua-type()| in addition to `'callable'`:
+                       `'boolean'`, `'callable'`, `'function'`, `'nil'`,
+                       `'number'`, `'string'`, `'table'`, `'thread'`,
+                       `'userdata'`.
+                     • (`fun(val:any): boolean, string?`) A function that
+                       returns a boolean and an optional string message.
+      • {optional}   (`boolean?`) Argument is optional (may be omitted)
+      • {message}    (`string?`) message when validation fails
 
 
 ==============================================================================
@@ -2513,8 +2521,8 @@ vim.loader.find({modname}, {opts})                         *vim.loader.find()*
         (`table[]`) A list of objects with the following fields:
         • {modpath} (`string`) Path of the module
         • {modname} (`string`) Name of the module
-        • {stat}? (`uv.uv_fs_t`) The fs_stat of the module path. Won't be
-          returned for `modname="*"`
+        • {stat}? (`uv.fs_stat.result`) The fs_stat of the module path. Won't
+          be returned for `modname="*"`
 
 vim.loader.reset({path})                                  *vim.loader.reset()*
     WARNING: This feature is experimental/unstable.
@@ -2676,7 +2684,7 @@ vim.ui.select({items}, {opts}, {on_choice})                  *vim.ui.select()*
                        item shape. Plugins reimplementing `vim.ui.select` may
                        wish to use this to infer the structure or semantics of
                        `items`, or the context in which select() was called.
-      • {on_choice}  (`fun(item: any?, idx: integer?)`) Called once the user
+      • {on_choice}  (`fun(item: T?, idx: integer?)`) Called once the user
                      made a choice. `idx` is the 1-based index of `item`
                      within `items`. `nil` if the user aborted the dialog.
 

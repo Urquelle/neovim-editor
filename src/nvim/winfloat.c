@@ -137,7 +137,7 @@ void win_set_minimal_style(win_T *wp)
                    ? xstrdup("EndOfBuffer:")
                    : concat_str(old, ",EndOfBuffer:"));
   free_string_option(old);
-  parse_winhl_opt(wp);
+  parse_winhl_opt(NULL, wp);
 
   // signcolumn: use 'auto'
   if (wp->w_p_scl[0] != 'a' || strlen(wp->w_p_scl) >= 8) {
@@ -389,6 +389,7 @@ win_T *win_float_create(bool enter, bool new_buf)
   config.row = curwin->w_wrow;
   config.relative = kFloatRelativeEditor;
   config.focusable = false;
+  config.mouse = false;
   config.anchor = 0;  // NW
   config.noautocmd = true;
   config.hide = true;
