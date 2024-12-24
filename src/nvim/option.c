@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <uv.h>
 
 #include "auto/config.h"
 #include "klib/kvec.h"
@@ -47,6 +48,7 @@
 #include "nvim/errors.h"
 #include "nvim/eval.h"
 #include "nvim/eval/typval.h"
+#include "nvim/eval/typval_defs.h"
 #include "nvim/eval/vars.h"
 #include "nvim/eval/window.h"
 #include "nvim/ex_cmds_defs.h"
@@ -58,6 +60,7 @@
 #include "nvim/garray_defs.h"
 #include "nvim/gettext_defs.h"
 #include "nvim/globals.h"
+#include "nvim/grid_defs.h"
 #include "nvim/highlight.h"
 #include "nvim/highlight_defs.h"
 #include "nvim/highlight_group.h"
@@ -74,6 +77,7 @@
 #include "nvim/memfile.h"
 #include "nvim/memline.h"
 #include "nvim/memory.h"
+#include "nvim/memory_defs.h"
 #include "nvim/message.h"
 #include "nvim/mouse.h"
 #include "nvim/move.h"
@@ -88,7 +92,6 @@
 #include "nvim/os/os.h"
 #include "nvim/os/os_defs.h"
 #include "nvim/path.h"
-#include "nvim/plines.h"
 #include "nvim/popupmenu.h"
 #include "nvim/pos_defs.h"
 #include "nvim/regexp.h"
@@ -104,7 +107,6 @@
 #include "nvim/terminal.h"
 #include "nvim/types_defs.h"
 #include "nvim/ui.h"
-#include "nvim/ui_defs.h"
 #include "nvim/undo.h"
 #include "nvim/undo_defs.h"
 #include "nvim/vim_defs.h"
@@ -1977,8 +1979,8 @@ static const char *did_set_cmdheight(optset_T *args)
 {
   OptInt old_value = args->os_oldval.number;
 
-  if (p_ch > Rows - min_rows() + 1) {
-    p_ch = Rows - min_rows() + 1;
+  if (p_ch > Rows - min_rows(curtab) + 1) {
+    p_ch = Rows - min_rows(curtab) + 1;
   }
 
   // if p_ch changed value, change the command line height
@@ -2196,13 +2198,6 @@ static const char *did_set_modified(optset_T *args)
   }
   redraw_titles();
   buf->b_modified_was_set = (int)args->os_newval.boolean;
-  return NULL;
-}
-
-/// Process the updated 'msghistory' option value.
-static const char *did_set_msghistory(optset_T *args FUNC_ATTR_UNUSED)
-{
-  check_msg_hist();
   return NULL;
 }
 
@@ -2880,13 +2875,6 @@ static const char *validate_num_option(OptIndex opt_idx, OptInt *newval, char *e
     }
     break;
   case kOptHistory:
-    if (value < 0) {
-      return e_positive;
-    } else if (value > 10000) {
-      return e_invarg;
-    }
-    break;
-  case kOptMsghistory:
     if (value < 0) {
       return e_positive;
     } else if (value > 10000) {
@@ -3947,7 +3935,7 @@ static bool switch_option_context(void *const ctx, OptScope scope, void *const f
         == FAIL) {
       restore_win_noblock(switchwin, true);
 
-      if (try_end(err)) {
+      if (ERROR_SET(err)) {
         return false;
       }
       api_set_error(err, kErrorTypeException, "Problem while switching windows");

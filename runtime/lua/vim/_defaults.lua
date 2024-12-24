@@ -49,10 +49,10 @@ do
 
     vim.keymap.set('x', '*', function()
       return _visual_search('/')
-    end, { desc = ':help v_star-default', expr = true, silent = true })
+    end, { desc = ':help v_star-default', expr = true, replace_keycodes = false })
     vim.keymap.set('x', '#', function()
       return _visual_search('?')
-    end, { desc = ':help v_#-default', expr = true, silent = true })
+    end, { desc = ':help v_#-default', expr = true, replace_keycodes = false })
   end
 
   --- Map Y to y$. This mimics the behavior of D and C. See |Y-default|
@@ -435,7 +435,7 @@ do
     group = nvim_terminal_augroup,
     desc = 'Treat term:// buffers as terminal buffers',
     nested = true,
-    command = "if !exists('b:term_title')|call termopen(matchstr(expand(\"<amatch>\"), '\\c\\mterm://\\%(.\\{-}//\\%(\\d\\+:\\)\\?\\)\\?\\zs.*'), {'cwd': expand(get(matchlist(expand(\"<amatch>\"), '\\c\\mterm://\\(.\\{-}\\)//'), 1, ''))})",
+    command = "if !exists('b:term_title')|call jobstart(matchstr(expand(\"<amatch>\"), '\\c\\mterm://\\%(.\\{-}//\\%(\\d\\+:\\)\\?\\)\\?\\zs.*'), {'term': v:true, 'cwd': expand(get(matchlist(expand(\"<amatch>\"), '\\c\\mterm://\\(.\\{-}\\)//'), 1, ''))})",
   })
 
   vim.api.nvim_create_autocmd({ 'TermClose' }, {
@@ -492,6 +492,10 @@ do
       vim.bo.textwidth = 0
       vim.wo[0][0].wrap = false
       vim.wo[0][0].list = false
+      vim.wo[0][0].number = false
+      vim.wo[0][0].relativenumber = false
+      vim.wo[0][0].signcolumn = 'no'
+      vim.wo[0][0].foldcolumn = '0'
 
       -- This is gross. Proper list options support when?
       local winhl = vim.o.winhighlight

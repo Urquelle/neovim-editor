@@ -37,10 +37,10 @@
 -- Tests will often share a group of extra attribute sets to expect(). Those can be
 -- defined at the beginning of a test:
 --
---    screen:add_extra_attr_ids {
+--    screen:add_extra_attr_ids({
 --      [100] = { background = Screen.colors.Plum1, underline = true },
 --      [101] = { background = Screen.colors.Red1, bold = true, underline = true },
---    }
+--    })
 --
 -- To help write screen tests, see Screen:snapshot_util().
 -- To debug screen tests, see Screen:redraw_debug().
@@ -79,6 +79,7 @@ end
 --- @field win_position table<integer,table<string,integer>>
 --- @field float_pos table<integer,table>
 --- @field cmdline table<integer,table>
+--- @field cmdline_hide_level integer?
 --- @field cmdline_block table[]
 --- @field hl_groups table<string,integer>
 --- @field messages table<integer,table>
@@ -454,7 +455,7 @@ end
 ---    screen:expect(grid, [attr_ids])
 ---    screen:expect(condition)
 --- or keyword args (supports more options):
----    screen:expect{grid=[[...]], cmdline={...}, condition=function() ... end}
+---    screen:expect({ grid=[[...]], cmdline={...}, condition=function() ... end })
 ---
 --- @param expected string|function|test.function.ui.screen.Expect
 --- @param attr_ids? table<integer,table<string,any>>
@@ -652,6 +653,12 @@ screen:redraw_debug() to show all intermediate screen states.]]
           )
         end
       end
+    end
+
+    -- Only test the abort state of a cmdline level once.
+    if self.cmdline_hide_level ~= nil then
+      self.cmdline[self.cmdline_hide_level] = nil
+      self.cmdline_hide_level = nil
     end
 
     if expected.hl_groups ~= nil then
@@ -967,11 +974,11 @@ function Screen:_handle_mode_info_set(cursor_style_enabled, mode_info)
   self._cursor_style_enabled = cursor_style_enabled
   for _, item in pairs(mode_info) do
     -- attr IDs are not stable, but their value should be
-    if item.attr_id ~= nil then
+    if item.attr_id ~= nil and self._attr_table[item.attr_id] ~= nil then
       item.attr = self._attr_table[item.attr_id][1]
       item.attr_id = nil
     end
-    if item.attr_id_lm ~= nil then
+    if item.attr_id_lm ~= nil and self._attr_table[item.attr_id_lm] ~= nil then
       item.attr_lm = self._attr_table[item.attr_id_lm][1]
       item.attr_id_lm = nil
     end
@@ -1296,7 +1303,7 @@ function Screen:_handle_popupmenu_hide()
   self.popupmenu = nil
 end
 
-function Screen:_handle_cmdline_show(content, pos, firstc, prompt, indent, level)
+function Screen:_handle_cmdline_show(content, pos, firstc, prompt, indent, level, hl_id)
   if firstc == '' then
     firstc = nil
   end
@@ -1320,11 +1327,13 @@ function Screen:_handle_cmdline_show(content, pos, firstc, prompt, indent, level
     firstc = firstc,
     prompt = prompt,
     indent = indent,
+    hl_id = prompt and hl_id,
   }
 end
 
-function Screen:_handle_cmdline_hide(level)
-  self.cmdline[level] = nil
+function Screen:_handle_cmdline_hide(level, abort)
+  self.cmdline[level] = { abort = abort }
+  self.cmdline_hide_level = level
 end
 
 function Screen:_handle_cmdline_special_char(char, shift, level)
@@ -1360,12 +1369,12 @@ function Screen:_handle_wildmenu_hide()
   self.wildmenu_items, self.wildmenu_pos = nil, nil
 end
 
-function Screen:_handle_msg_show(kind, chunks, replace_last)
+function Screen:_handle_msg_show(kind, chunks, replace_last, history)
   local pos = #self.messages
   if not replace_last or pos == 0 then
     pos = pos + 1
   end
-  self.messages[pos] = { kind = kind, content = chunks }
+  self.messages[pos] = { kind = kind, content = chunks, history = history }
 end
 
 function Screen:_handle_msg_clear()
@@ -1468,7 +1477,9 @@ function Screen:_extstate_repr(attr_state)
   local cmdline = {}
   for i, entry in pairs(self.cmdline) do
     entry = shallowcopy(entry)
-    entry.content = self:_chunks_repr(entry.content, attr_state)
+    if entry.content ~= nil then
+      entry.content = self:_chunks_repr(entry.content, attr_state)
+    end
     cmdline[i] = entry
   end
 
@@ -1479,7 +1490,11 @@ function Screen:_extstate_repr(attr_state)
 
   local messages = {}
   for i, entry in ipairs(self.messages) do
-    messages[i] = { kind = entry.kind, content = self:_chunks_repr(entry.content, attr_state) }
+    messages[i] = {
+      kind = entry.kind,
+      content = self:_chunks_repr(entry.content, attr_state),
+      history = entry.history,
+    }
   end
 
   local msg_history = {}
@@ -1713,21 +1728,24 @@ function Screen:_print_snapshot()
       end
     end
     local fn_name = modify_attrs and 'add_extra_attr_ids' or 'set_default_attr_ids'
-    attrstr = ('screen:' .. fn_name .. ' {\n' .. table.concat(attrstrs, '\n') .. '\n}\n\n')
+    attrstr = ('screen:' .. fn_name .. '({\n' .. table.concat(attrstrs, '\n') .. '\n})\n\n')
   end
 
-  local result = ('%sscreen:expect({\n  grid = [[\n  %s\n  ]]'):format(
-    attrstr,
-    kwargs.grid:gsub('\n', '\n  ')
-  )
+  local extstr = ''
   for _, k in ipairs(ext_keys) do
     if ext_state[k] ~= nil and not (k == 'win_viewport' and not self.options.ext_multigrid) then
-      result = result .. ', ' .. k .. '=' .. fmt_ext_state(k, ext_state[k])
+      extstr = extstr .. '\n  ' .. k .. ' = ' .. fmt_ext_state(k, ext_state[k]) .. ','
     end
   end
-  result = result .. '\n})'
 
-  return result
+  return ('%sscreen:expect(%s%s%s%s%s'):format(
+    attrstr,
+    #extstr > 0 and '{\n  grid = [[\n  ' or '[[\n',
+    #extstr > 0 and kwargs.grid:gsub('\n', '\n  ') or kwargs.grid,
+    #extstr > 0 and '\n  ]],' or '\n]]',
+    extstr,
+    #extstr > 0 and '\n})' or ')'
+  )
 end
 
 function Screen:print_snapshot()

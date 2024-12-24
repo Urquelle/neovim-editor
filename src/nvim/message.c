@@ -2,6 +2,7 @@
 
 #include <assert.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -26,6 +27,7 @@
 #include "nvim/event/loop.h"
 #include "nvim/event/multiqueue.h"
 #include "nvim/ex_cmds_defs.h"
+#include "nvim/ex_docmd.h"
 #include "nvim/ex_eval.h"
 #include "nvim/fileio.h"
 #include "nvim/garray.h"
@@ -45,6 +47,7 @@
 #include "nvim/mbyte.h"
 #include "nvim/mbyte_defs.h"
 #include "nvim/memory.h"
+#include "nvim/memory_defs.h"
 #include "nvim/message.h"
 #include "nvim/mouse.h"
 #include "nvim/ops.h"
@@ -94,6 +97,16 @@ static char *confirm_msg_tail;              // tail of confirm_msg
 MessageHistoryEntry *first_msg_hist = NULL;
 MessageHistoryEntry *last_msg_hist = NULL;
 static int msg_hist_len = 0;
+static int msg_hist_max = 500;  // The default max value is 500
+
+// args in 'messagesopt' option
+#define MESSAGES_OPT_HIT_ENTER "hit-enter"
+#define MESSAGES_OPT_WAIT "wait:"
+#define MESSAGES_OPT_HISTORY "history:"
+
+// The default is "hit-enter,history:500"
+static int msg_flags = kOptMoptFlagHitEnter | kOptMoptFlagHistory;
+static int msg_wait = 0;
 
 static FILE *verbose_fd = NULL;
 static bool verbose_did_open = false;
@@ -119,7 +132,7 @@ bool keep_msg_more = false;    // keep_msg was set by msgmore()
 // msg_scrolled     How many lines the screen has been scrolled (because of
 //                  messages).  Used in update_screen() to scroll the screen
 //                  back.  Incremented each time the screen scrolls a line.
-// msg_scrolled_ign  true when msg_scrolled is non-zero and msg_puts_hl_id()
+// msg_scrolled_ign  true when msg_scrolled is non-zero and msg_puts_hl()
 //                  writes something without scrolling should not make
 //                  need_wait_return to be set.  This is a hack to make ":ts"
 //                  work without an extra prompt.
@@ -142,6 +155,7 @@ static sattr_T msg_ext_last_attr = -1;
 static int msg_ext_last_hl_id;
 static size_t msg_ext_cur_len = 0;
 
+static bool msg_ext_history = false;  ///< message was added to history
 static bool msg_ext_overwrite = false;  ///< will overwrite last message
 static int msg_ext_visible = 0;  ///< number of messages currently visible
 
@@ -233,7 +247,7 @@ void msg_grid_validate(void)
 int verb_msg(const char *s)
 {
   verbose_enter();
-  int n = msg_hl_keep(s, 0, false, false);
+  int n = msg_keep(s, 0, false, false);
   verbose_leave();
 
   return n;
@@ -246,7 +260,7 @@ int verb_msg(const char *s)
 bool msg(const char *s, const int hl_id)
   FUNC_ATTR_NONNULL_ARG(1)
 {
-  return msg_hl_keep(s, hl_id, false, false);
+  return msg_keep(s, hl_id, false, false);
 }
 
 /// Similar to msg_outtrans_len, but support newlines and tabs.
@@ -298,7 +312,7 @@ void msg_multihl(HlMessage hl_msg, const char *kind, bool history)
 }
 
 /// @param keep set keep_msg if it doesn't scroll
-bool msg_hl_keep(const char *s, int hl_id, bool keep, bool multiline)
+bool msg_keep(const char *s, int hl_id, bool keep, bool multiline)
   FUNC_ATTR_NONNULL_ALL
 {
   static int entered = 0;
@@ -503,7 +517,7 @@ int smsg(int hl_id, const char *s, ...)
   return msg(IObuff, hl_id);
 }
 
-int smsg_hl_keep(int hl_id, const char *s, ...)
+int smsg_keep(int hl_id, const char *s, ...)
   FUNC_ATTR_PRINTF(2, 3)
 {
   va_list arglist;
@@ -511,7 +525,7 @@ int smsg_hl_keep(int hl_id, const char *s, ...)
   va_start(arglist, s);
   vim_vsnprintf(IObuff, IOSIZE, s, arglist);
   va_end(arglist);
-  return msg_hl_keep(IObuff, hl_id, true, false);
+  return msg_keep(IObuff, hl_id, true, false);
 }
 
 // Remember the last sourcing name/lnum used in an error message, so that it
@@ -756,7 +770,7 @@ bool emsg_multiline(const char *s, bool multiline)
 
   // Display the error message itself.
   msg_nowait = false;  // Wait for this msg.
-  return msg_hl_keep(s, hl_id, false, multiline);
+  return msg_keep(s, hl_id, false, multiline);
 }
 
 /// emsg() - display an error message
@@ -977,7 +991,7 @@ static void add_msg_hist(const char *s, int len, int hl_id, bool multiline)
 static void add_msg_hist_multihl(const char *s, int len, int hl_id, bool multiline,
                                  HlMessage multihl)
 {
-  if (msg_hist_off || msg_silent != 0) {
+  if (msg_hist_off || msg_silent != 0 || (s != NULL && *s == NUL)) {
     hl_msg_free(multihl);
     return;
   }
@@ -988,12 +1002,13 @@ static void add_msg_hist_multihl(const char *s, int len, int hl_id, bool multili
     if (len < 0) {
       len = (int)strlen(s);
     }
+    assert(len > 0);
     // remove leading and trailing newlines
-    while (len > 0 && *s == '\n') {
+    while (*s == '\n') {
       s++;
       len--;
     }
-    while (len > 0 && s[len - 1] == '\n') {
+    while (s[len - 1] == '\n') {
       len--;
     }
     p->msg = xmemdupz(s, (size_t)len);
@@ -1013,6 +1028,7 @@ static void add_msg_hist_multihl(const char *s, int len, int hl_id, bool multili
     first_msg_hist = last_msg_hist;
   }
   msg_hist_len++;
+  msg_ext_history = true;
 
   check_msg_hist();
 }
@@ -1038,12 +1054,74 @@ int delete_first_msg(void)
   return OK;
 }
 
-void check_msg_hist(void)
+static void check_msg_hist(void)
 {
   // Don't let the message history get too big
-  while (msg_hist_len > 0 && msg_hist_len > p_mhi) {
+  while (msg_hist_len > 0 && msg_hist_len > msg_hist_max) {
     (void)delete_first_msg();
   }
+}
+
+int messagesopt_changed(void)
+{
+  int messages_flags_new = 0;
+  int messages_wait_new = 0;
+  int messages_history_new = 0;
+
+  char *p = p_mopt;
+  while (*p != NUL) {
+    if (strnequal(p, S_LEN(MESSAGES_OPT_HIT_ENTER))) {
+      p += STRLEN_LITERAL(MESSAGES_OPT_HIT_ENTER);
+      messages_flags_new |= kOptMoptFlagHitEnter;
+    } else if (strnequal(p, S_LEN(MESSAGES_OPT_WAIT))
+               && ascii_isdigit(p[STRLEN_LITERAL(MESSAGES_OPT_WAIT)])) {
+      p += STRLEN_LITERAL(MESSAGES_OPT_WAIT);
+      messages_wait_new = getdigits_int(&p, false, INT_MAX);
+      messages_flags_new |= kOptMoptFlagWait;
+    } else if (strnequal(p, S_LEN(MESSAGES_OPT_HISTORY))
+               && ascii_isdigit(p[STRLEN_LITERAL(MESSAGES_OPT_HISTORY)])) {
+      p += STRLEN_LITERAL(MESSAGES_OPT_HISTORY);
+      messages_history_new = getdigits_int(&p, false, INT_MAX);
+      messages_flags_new |= kOptMoptFlagHistory;
+    }
+
+    if (*p != ',' && *p != NUL) {
+      return FAIL;
+    }
+    if (*p == ',') {
+      p++;
+    }
+  }
+
+  // Either "wait" or "hit-enter" is required
+  if (!(messages_flags_new & (kOptMoptFlagHitEnter | kOptMoptFlagWait))) {
+    return FAIL;
+  }
+
+  // "history" must be set
+  if (!(messages_flags_new & kOptMoptFlagHistory)) {
+    return FAIL;
+  }
+
+  assert(messages_history_new >= 0);
+  // "history" must be <= 10000
+  if (messages_history_new > 10000) {
+    return FAIL;
+  }
+
+  assert(messages_wait_new >= 0);
+  // "wait" must be <= 10000
+  if (messages_wait_new > 10000) {
+    return FAIL;
+  }
+
+  msg_flags = messages_flags_new;
+  msg_wait = messages_wait_new;
+
+  msg_hist_max = messages_history_new;
+  check_msg_hist();
+
+  return OK;
 }
 
 /// :messages command implementation
@@ -1120,7 +1198,7 @@ void ex_messages(exarg_T *eap)
       if (kv_size(p->multihl)) {
         msg_multihl(p->multihl, p->kind, false);
       } else if (p->msg != NULL) {
-        msg_hl_keep(p->msg, p->hl_id, false, p->multiline);
+        msg_keep(p->msg, p->hl_id, false, p->multiline);
       }
     }
     msg_hist_off = false;
@@ -1209,83 +1287,88 @@ void wait_return(int redraw)
       cmdline_row = Rows - 1;
     }
 
-    hit_return_msg(true);
+    if (msg_flags & kOptMoptFlagHitEnter) {
+      hit_return_msg(true);
 
-    do {
-      // Remember "got_int", if it is set vgetc() probably returns a
-      // CTRL-C, but we need to loop then.
-      had_got_int = got_int;
+      do {
+        // Remember "got_int", if it is set vgetc() probably returns a
+        // CTRL-C, but we need to loop then.
+        had_got_int = got_int;
 
-      // Don't do mappings here, we put the character back in the
-      // typeahead buffer.
-      no_mapping++;
-      allow_keys++;
+        // Don't do mappings here, we put the character back in the
+        // typeahead buffer.
+        no_mapping++;
+        allow_keys++;
 
-      // Temporarily disable Recording. If Recording is active, the
-      // character will be recorded later, since it will be added to the
-      // typebuf after the loop
-      const int save_reg_recording = reg_recording;
-      save_scriptout = scriptout;
-      reg_recording = 0;
-      scriptout = NULL;
-      c = safe_vgetc();
-      if (had_got_int && !global_busy) {
-        got_int = false;
-      }
-      no_mapping--;
-      allow_keys--;
-      reg_recording = save_reg_recording;
-      scriptout = save_scriptout;
-
-      // Allow scrolling back in the messages.
-      // Also accept scroll-down commands when messages fill the screen,
-      // to avoid that typing one 'j' too many makes the messages
-      // disappear.
-      if (p_more) {
-        if (c == 'b' || c == 'k' || c == 'u' || c == 'g'
-            || c == K_UP || c == K_PAGEUP) {
-          if (msg_scrolled > Rows) {
-            // scroll back to show older messages
-            do_more_prompt(c);
-          } else {
-            msg_didout = false;
-            c = K_IGNORE;
-            msg_col = 0;
-          }
-          if (quit_more) {
-            c = CAR;                            // just pretend CR was hit
-            quit_more = false;
-            got_int = false;
-          } else if (c != K_IGNORE) {
-            c = K_IGNORE;
-            hit_return_msg(false);
-          }
-        } else if (msg_scrolled > Rows - 2
-                   && (c == 'j' || c == 'd' || c == 'f'
-                       || c == K_DOWN || c == K_PAGEDOWN)) {
-          c = K_IGNORE;
+        // Temporarily disable Recording. If Recording is active, the
+        // character will be recorded later, since it will be added to the
+        // typebuf after the loop
+        const int save_reg_recording = reg_recording;
+        save_scriptout = scriptout;
+        reg_recording = 0;
+        scriptout = NULL;
+        c = safe_vgetc();
+        if (had_got_int && !global_busy) {
+          got_int = false;
         }
-      }
-    } while ((had_got_int && c == Ctrl_C)
-             || c == K_IGNORE
-             || c == K_LEFTDRAG || c == K_LEFTRELEASE
-             || c == K_MIDDLEDRAG || c == K_MIDDLERELEASE
-             || c == K_RIGHTDRAG || c == K_RIGHTRELEASE
-             || c == K_MOUSELEFT || c == K_MOUSERIGHT
-             || c == K_MOUSEDOWN || c == K_MOUSEUP
-             || c == K_MOUSEMOVE);
-    os_breakcheck();
+        no_mapping--;
+        allow_keys--;
+        reg_recording = save_reg_recording;
+        scriptout = save_scriptout;
 
-    // Avoid that the mouse-up event causes visual mode to start.
-    if (c == K_LEFTMOUSE || c == K_MIDDLEMOUSE || c == K_RIGHTMOUSE
-        || c == K_X1MOUSE || c == K_X2MOUSE) {
-      jump_to_mouse(MOUSE_SETPOS, NULL, 0);
-    } else if (vim_strchr("\r\n ", c) == NULL && c != Ctrl_C) {
-      // Put the character back in the typeahead buffer.  Don't use the
-      // stuff buffer, because lmaps wouldn't work.
-      ins_char_typebuf(vgetc_char, vgetc_mod_mask, true);
-      do_redraw = true;             // need a redraw even though there is
-                                    // typeahead
+        // Allow scrolling back in the messages.
+        // Also accept scroll-down commands when messages fill the screen,
+        // to avoid that typing one 'j' too many makes the messages
+        // disappear.
+        if (p_more) {
+          if (c == 'b' || c == 'k' || c == 'u' || c == 'g'
+              || c == K_UP || c == K_PAGEUP) {
+            if (msg_scrolled > Rows) {
+              // scroll back to show older messages
+              do_more_prompt(c);
+            } else {
+              msg_didout = false;
+              c = K_IGNORE;
+              msg_col = 0;
+            }
+            if (quit_more) {
+              c = CAR;  // just pretend CR was hit
+              quit_more = false;
+              got_int = false;
+            } else if (c != K_IGNORE) {
+              c = K_IGNORE;
+              hit_return_msg(false);
+            }
+          } else if (msg_scrolled > Rows - 2
+                     && (c == 'j' || c == 'd' || c == 'f'
+                         || c == K_DOWN || c == K_PAGEDOWN)) {
+            c = K_IGNORE;
+          }
+        }
+      } while ((had_got_int && c == Ctrl_C)
+               || c == K_IGNORE
+               || c == K_LEFTDRAG || c == K_LEFTRELEASE
+               || c == K_MIDDLEDRAG || c == K_MIDDLERELEASE
+               || c == K_RIGHTDRAG || c == K_RIGHTRELEASE
+               || c == K_MOUSELEFT || c == K_MOUSERIGHT
+               || c == K_MOUSEDOWN || c == K_MOUSEUP
+               || c == K_MOUSEMOVE);
+      os_breakcheck();
+
+      // Avoid that the mouse-up event causes visual mode to start.
+      if (c == K_LEFTMOUSE || c == K_MIDDLEMOUSE || c == K_RIGHTMOUSE
+          || c == K_X1MOUSE || c == K_X2MOUSE) {
+        jump_to_mouse(MOUSE_SETPOS, NULL, 0);
+      } else if (vim_strchr("\r\n ", c) == NULL && c != Ctrl_C) {
+        // Put the character back in the typeahead buffer.  Don't use the
+        // stuff buffer, because lmaps wouldn't work.
+        ins_char_typebuf(vgetc_char, vgetc_mod_mask, true);
+        do_redraw = true;  // need a redraw even though there is typeahead
+      }
+    } else {
+      c = CAR;
+      // Wait to allow the user to verify the output.
+      do_sleep(msg_wait, true);
     }
   }
   redir_off = false;
@@ -2025,12 +2108,12 @@ void msg_outtrans_long(const char *longstr, int hl_id)
   int len = (int)strlen(longstr);
   int slen = len;
   int room = Columns - msg_col;
-  if (len > room && room >= 20) {
+  if (!ui_has(kUIMessages) && len > room && room >= 20) {
     slen = (room - 3) / 2;
     msg_outtrans_len(longstr, slen, hl_id, false);
     msg_puts_hl("...", HLF_8, false);
   }
-  msg_outtrans_len(longstr + len - slen, slen, hl_id, len);
+  msg_outtrans_len(longstr + len - slen, slen, hl_id, false);
 }
 
 /// Basic function for writing a message with highlight id.
@@ -2051,8 +2134,8 @@ void msg_puts_len(const char *const str, const ptrdiff_t len, int hl_id, bool hi
   // If redirection is on, also write to the redirection file.
   redir_write(str, len);
 
-  // Don't print anything when using ":silent cmd".
-  if (msg_silent != 0) {
+  // Don't print anything when using ":silent cmd" or empty message.
+  if (msg_silent != 0 || *str == NUL) {
     return;
   }
 
@@ -2100,27 +2183,6 @@ void msg_puts_len(const char *const str, const ptrdiff_t len, int hl_id, bool hi
   need_fileinfo = false;
 }
 
-/// Print a formatted message
-///
-/// Message printed is limited by #IOSIZE. Must not be used from inside
-/// msg_puts_hl_id().
-///
-/// @param[in]  hl_id  Highlight id.
-/// @param[in]  fmt  Format string.
-void msg_printf_hl(const int hl_id, const char *const fmt, ...)
-  FUNC_ATTR_NONNULL_ARG(2) FUNC_ATTR_PRINTF(2, 3)
-{
-  static char msgbuf[IOSIZE];
-
-  va_list ap;
-  va_start(ap, fmt);
-  const size_t len = (size_t)vim_vsnprintf(msgbuf, sizeof(msgbuf), fmt, ap);
-  va_end(ap);
-
-  msg_scroll = true;
-  msg_puts_len(msgbuf, (ptrdiff_t)len, hl_id, true);
-}
-
 static void msg_ext_emit_chunk(void)
 {
   if (msg_ext_chunks == NULL) {
@@ -2160,6 +2222,12 @@ static void msg_puts_display(const char *str, int maxlen, int hl_id, int recurse
     size_t len = maxlen < 0 ? strlen(str) : strnlen(str, (size_t)maxlen);
     ga_concat_len(&msg_ext_last_chunk, str, len);
     msg_ext_cur_len += len;
+    // When message ends in newline, reset variables used to format message: msg_advance().
+    assert(len > 0);
+    if (str[len - 1] == '\n') {
+      msg_ext_cur_len = 0;
+      msg_col = 0;
+    }
     return;
   }
 
@@ -3075,13 +3143,14 @@ void msg_ext_ui_flush(void)
   msg_ext_emit_chunk();
   if (msg_ext_chunks->size > 0) {
     Array *tofree = msg_ext_init_chunks();
-    ui_call_msg_show(cstr_as_string(msg_ext_kind), *tofree, msg_ext_overwrite);
+    ui_call_msg_show(cstr_as_string(msg_ext_kind), *tofree, msg_ext_overwrite, msg_ext_history);
     api_free_array(*tofree);
     xfree(tofree);
     if (!msg_ext_overwrite) {
       msg_ext_visible++;
     }
     msg_ext_overwrite = false;
+    msg_ext_history = false;
     msg_ext_kind = NULL;
   }
 }

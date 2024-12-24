@@ -15,7 +15,6 @@
 #include "nvim/digraph.h"
 #include "nvim/drawscreen.h"
 #include "nvim/errors.h"
-#include "nvim/eval/typval_defs.h"
 #include "nvim/eval/userfunc.h"
 #include "nvim/eval/vars.h"
 #include "nvim/ex_getln.h"
@@ -1680,6 +1679,24 @@ const char *did_set_matchpairs(optset_T *args)
     }
   }
   return NULL;
+}
+
+/// Process the updated 'messagesopt' option value.
+const char *did_set_messagesopt(optset_T *args FUNC_ATTR_UNUSED)
+{
+  if (messagesopt_changed() == FAIL) {
+    return e_invarg;
+  }
+  return NULL;
+}
+
+int expand_set_messagesopt(optexpand_T *args, int *numMatches, char ***matches)
+{
+  return expand_set_opt_string(args,
+                               opt_mopt_values,
+                               ARRAY_SIZE(opt_mopt_values) - 1,
+                               numMatches,
+                               matches);
 }
 
 /// The 'mkspellmem' option is changed.
